@@ -1,0 +1,1706 @@
+---
+title: "beta diversity"
+author: "HP"
+date: "11/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## library
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggpubr)
+library(usedist)
+library(vegan)
+library(ape)
+library(patchwork)
+load("temp.RData")
+#load("01_Rdata/meta_16S.Rdata")
+#load("01_Rdata/beta.Rdata")
+output = "03_beta/"
+```
+
+## data filtering
+```{r}
+meta = meta_16S[pmatch(rownames(as.matrix(dm_bray)),meta_16S$SampleID,),]
+
+meta_pup <- meta %>% filter(Generation == "F1") %>% 
+    mutate(Facility = case_when(Facility == "Farm" ~ "Farm", 
+                                T ~ "Vivarium"),
+           Treatment = case_when(TREATMENT == "DIWATER" ~ "Diwater",
+                                 T ~ "Chlorinated"),
+           Sex = case_when(Sex == "F" ~ "Female",
+                            T ~ "Male")) %>% 
+    mutate(SamplingTimepoint = str_trim(SamplingTimepoint)) %>%
+    mutate(Week = case_when(SamplingTimepoint == "Week3" ~ "Week 3",
+                            SamplingTimepoint == "Week7" ~ "Week 7",
+                            SamplingTimepoint == "Week12" ~ "Week 12",
+                            T ~ NA)) %>% 
+    drop_na(Week) %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                          ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T),
+           Treatment = factor(Treatment,
+                              levels = c("Diwater", "Chlorinated"),
+                              ordered = T))
+
+vivarium_IDs <- filter(meta_pup, Week == "Week 12" & Facility == "Vivarium") %>% distinct(SubjectID) %>% pull(SubjectID)
+
+farm_IDs <- filter(meta_pup, Week == "Week 7" & Facility == "Farm") %>% 
+  group_by(FamilyID) %>%
+  filter(n() > 1) %>%
+  ungroup() %>% 
+  distinct(SubjectID) %>% pull(SubjectID)
+
+final_IDs <- c(vivarium_IDs, farm_IDs)
+meta_filtered <- meta_pup %>% filter(SubjectID %in% final_IDs)
+
+theme_all <- theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       axis.text = element_text(size = 8),
+                       axis.title = element_text(size = 8),
+                       legend.text = element_text(size=8),
+                       legend.title = element_blank(),
+                       title = element_text(size=10),
+                       aspect.ratio = 1)
+
+```
+
+## comparing Pup
+```{r}
+meta_pup = meta %>% filter(Generation == "F1") %>% 
+  mutate(SamplingTimepoint = str_trim(SamplingTimepoint)) %>%
+  mutate(SamplingTimepoint = factor(SamplingTimepoint, 
+                                    levels = c("Week3","Week4","Week5", "Week7","Week9","Week12"),
+                                    ordered = T))
+
+for (i in c("bray", "jaccard", "unifrac", "wunifrac")){
+  wdist = as.dist(get(i))
+  wwdist = dist_subset(wdist, meta_pup$SampleID)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa$values$Relative_eig[3]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_pup, by.x = 0, by.y = "SampleID")
+
+  g = ggplot(wdat %>% filter(Sex == "M"), aes(x = Axis.1, y = Axis.2, color = TREATMENT)) + 
+        geom_point(alpha = 0.8, size = 4) + 
+        stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1: ", varPC1, "% explained variation"),
+           y = paste0("PC2: ", varPC2, "% explained variation"),
+           title = paste0("PCoA on ", i, " of Male")) + 
+        facet_grid(Facility ~ SamplingTimepoint,  ) + 
+        theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       axis.text = element_text(size = 10),
+                       axis.title = element_text(size = 12),
+                       strip.text = element_text(size=15),
+                       legend.text = element_text(size=12),
+                       legend.title = element_text(size=14),
+                       title = element_text(size=16)) 
+  ggsave(file = paste(output,"pup_male_pcoa_treatment_",i,".png",sep = ""),
+         g, width = 30, height = 16, units = "cm", dpi = 300, device = "png")
+
+  g = ggplot(wdat %>% filter(Sex == "F"), aes(x = Axis.1, y = Axis.2, color = TREATMENT)) + 
+        geom_point(alpha = 0.8, size = 4) + 
+        stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1: ", varPC1, "% explained variation"),
+           y = paste0("PC2: ", varPC2, "% explained variation"),
+           title = paste0("PCoA on ", i, " of Female")) + 
+        facet_grid(Facility ~ SamplingTimepoint,  ) + 
+        theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       axis.text = element_text(size = 10),
+                       axis.title = element_text(size = 12),
+                       strip.text = element_text(size=15),
+                       legend.text = element_text(size=12),
+                       legend.title = element_text(size=14),
+                       title = element_text(size=16)) 
+  ggsave(file = paste(output,"pup_female_pcoa_treatment_",i,".png",sep = ""),
+         g, width = 30, height = 16, units = "cm", dpi = 300, device = "png")
+
+  g = ggplot(wdat %>% filter(Sex == "M"), aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 4) + 
+        stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1: ", varPC1, "% explained variation"),
+           y = paste0("PC2: ", varPC2, "% explained variation"),
+           title = paste0("PCoA on ", i, " of Male")) + 
+        facet_grid(TREATMENT ~ SamplingTimepoint,  ) + 
+        theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       axis.text = element_text(size = 10),
+                       axis.title = element_text(size = 12),
+                       strip.text = element_text(size=15),
+                       legend.text = element_text(size=12),
+                       legend.title = element_text(size=14),
+                       title = element_text(size=16)) 
+  ggsave(file = paste(output,"pup_male_pcoa_facility_",i,".png",sep = ""),
+         g, width = 30, height = 16, units = "cm", dpi = 300, device = "png")
+
+  g = ggplot(wdat %>% filter(Sex == "F"), aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 4) + 
+        stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1: ", varPC1, "% explained variation"),
+           y = paste0("PC2: ", varPC2, "% explained variation"),
+           title = paste0("PCoA on ", i, " of Female")) + 
+        facet_grid(TREATMENT ~ SamplingTimepoint,  ) + 
+        theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       axis.text = element_text(size = 10),
+                       axis.title = element_text(size = 12),
+                       strip.text = element_text(size=15),
+                       legend.text = element_text(size=12),
+                       legend.title = element_text(size=14),
+                       title = element_text(size=16)) 
+  ggsave(file = paste(output,"pup_female_pcoa_facility_",i,".png",sep = ""),
+         g, width = 30, height = 16, units = "cm", dpi = 300, device = "png")  
+ 
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, factor = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_pup$SamplingTimepoint)) {
+    for (k in c("M","F")){
+      wmeta = meta_pup %>% filter(SamplingTimepoint == j, Sex == k)
+      wwdist = dist_subset(wdist, wmeta$SampleID)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Facility + TREATMENT, data = wmeta, by = "margin"))
+      a = a[c("Facility","TREATMENT"),c("R2","F","Pr(>F)")]
+      a = a %>% 
+        transmute(Timepoint = j,
+                  Sex = k,
+                  comp = "Both",
+                  factor = row.names(a),
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,4),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      ##TREATMENT
+      for (fac in names(table(wmeta$Facility))){
+        wmeta = meta_pup %>% filter(SamplingTimepoint == j,Sex == k, Facility == fac)
+        wwdist = dist_subset(wdist, wmeta$SampleID)
+        set.seed(1)
+        a = as.data.frame(adonis2(wwdist ~ TREATMENT, data = wmeta, by = "margin"))
+        a = a[c("TREATMENT"),c("R2","F","Pr(>F)")] 
+        a = a %>% 
+          transmute(Timepoint = j,
+                    Sex = k,
+                    comp = "TREATMENT",
+                    factor = fac,
+                    R2 = paste0(round(R2*100,2)," %"),
+                    F = round(F,3),
+                    pvalue = round(`Pr(>F)`,3))
+        res = rbind(res, a)
+      }
+      ##Facility
+      for (treat in names(table(wmeta$TREATMENT))){
+        wmeta = meta_pup %>% filter(SamplingTimepoint == j,Sex == k, TREATMENT == treat)
+        wwdist = dist_subset(wdist, wmeta$SampleID)
+        set.seed(1)
+        a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+        a = a[c("Facility"),c("R2","F","Pr(>F)")] 
+        a = a %>% 
+          transmute(Timepoint = j,
+                    Sex = k,
+                    comp = "Facility",
+                    factor = treat,
+                    R2 = paste0(round(R2*100,2)," %"),
+                    F = round(F,3),
+                    pvalue = round(`Pr(>F)`,3))
+        res = rbind(res, a)
+      }
+    }  
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste(output,"pup_adonis",i,".csv",sep = ""))
+} 
+```
+
+#PCOA of all samples
+```{r}
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#all samples in pcoa
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_filtered$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa$values$Relative_eig[3]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = "Facility") + 
+        theme_bw() + theme_all + theme(legend.title = element_blank(),
+                                       plot.title = element_text(size=10, face = "bold"))
+  
+  g2 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = "Water Treatment") +
+        theme_bw() + theme_all + theme(legend.title = element_blank(),
+                                       plot.title = element_text(size=10, face = "bold"))
+
+   g3 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Week)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_age) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = "Age (weeks)") + 
+        theme_bw() + theme_all + theme(legend.title = element_blank(),
+                                       plot.title = element_text(size=10, face = "bold"))
+   
+  p <- g1 + g2 + 
+       g3 +
+    plot_layout(ncol = 2) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_whole_pcoa_age-treatment-facility_",i,"_for_paper.pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+}
+
+
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, factor = NA, R2 = NA, F = NA, pvalue = NA)
+  wdist = get(paste0("dm_", i))
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_filtered$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+  
+  wmeta <- meta_filtered[meta_filtered$SampleID %in% ids, ]
+  wwdist = dist_subset(wdist, ids)
+  set.seed(1)
+  a = as.data.frame(adonis2(wwdist ~ Week + Treatment + Facility + Sex, data = wmeta, by = "margin"))
+    write.csv(a, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_whole_pcoa_",i,".csv",sep = ""))
+    
+    
+    res = data.frame(Timepoint = NA, Sex = NA, comp = NA, Df = NA, SumOfSqs = NA, R2 = NA, F = NA, pvalue = NA)
+    for (j in levels(meta_filtered$Week)) {
+      wmeta = meta_filtered %>% filter(Week == j)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Facility + Treatment + Sex, data = wmeta, by = "margin"))
+      #a = a[c("Age"),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(Timepoint = j,
+                  Sex = "All",
+                  comp = "Age",
+                  Df = Df,
+                  SumOfSqs = round(SumOfSqs,3),
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+    }
+    write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_whole_pcoa_by_age_",i,".csv",sep = ""))
+  }    
+  
+```
+
+#Facility differences by age and water treatment
+```{r}
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#top panels are diwater, bottom are chlorinated
+#facility differences in diwater only, individual panels > patchwork
+#p and R values added in illustrator
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_week3 = meta_filtered %>% filter(TREATMENT == "DIWATER" & SamplingTimepoint == "Week3")
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week3$SampleID)
+  wwdist_3 <- dist_subset(wdist, ids)
+
+  wpcoa_3 = pcoa(wwdist_3)
+  varPC1 <- round(wpcoa_3$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_3$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_3$values$Relative_eig[3]*100, 2)
+  wdat_3 = merge(wpcoa_3$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat_3, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Diwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all 
+
+ 
+    meta_week7 = meta_filtered %>% filter(TREATMENT == "DIWATER" & SamplingTimepoint == "Week7")
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week7$SampleID)
+  wwdist_7 <- dist_subset(wdist, ids)
+
+  wpcoa_7 = pcoa(wwdist_7)
+  varPC1 <- round(wpcoa_7$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_7$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_7$values$Relative_eig[3]*100, 2)
+  wdat_7 = merge(wpcoa_7$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat_7, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Diwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+ 
+  
+  meta_week12 = meta_filtered %>% filter(TREATMENT == "DIWATER" & SamplingTimepoint == "Week12")
+    
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week12$SampleID)
+  wwdist_12 <- dist_subset(wdist, ids)
+
+  wpcoa_12 = pcoa(wwdist_12)
+  varPC1 <- round(wpcoa_12$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_12$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_12$values$Relative_eig[3]*100, 2)
+  wdat_12 = merge(wpcoa_12$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+  
+   g3 = ggplot(wdat_12, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Diwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all 
+   
+
+  meta_week3 = meta_filtered %>% filter(TREATMENT == "CHLORINATED" & SamplingTimepoint == "Week3")
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week3$SampleID)
+  wwdist_3 <- dist_subset(wdist, ids)
+
+  wpcoa_3 = pcoa(wwdist_3)
+  varPC1 <- round(wpcoa_3$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_3$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_3$values$Relative_eig[3]*100, 2)
+  wdat_3 = merge(wpcoa_3$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat_3, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Chlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all 
+
+ 
+    meta_week7 = meta_filtered %>% filter(TREATMENT == "CHLORINATED" & SamplingTimepoint == "Week7")
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week7$SampleID)
+  wwdist_7 <- dist_subset(wdist, ids)
+
+  wpcoa_7 = pcoa(wwdist_7)
+  varPC1 <- round(wpcoa_7$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_7$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_7$values$Relative_eig[3]*100, 2)
+  wdat_7 = merge(wpcoa_7$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat_7, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Chlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+ 
+  
+  meta_week12 = meta_filtered %>% filter(TREATMENT == "CHLORINATED" & SamplingTimepoint == "Week12")
+    
+  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_week12$SampleID)
+  wwdist_12 <- dist_subset(wdist, ids)
+
+  wpcoa_12 = pcoa(wwdist_12)
+  varPC1 <- round(wpcoa_12$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa_12$values$Relative_eig[2]*100, 2)
+  varPC3 <- round(wpcoa_12$values$Relative_eig[3]*100, 2)
+  wdat_12 = merge(wpcoa_12$vectors[,1:2],meta_filtered, by.x = 0, by.y = "SampleID")
+  
+   g6 = ggplot(wdat_12, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Chlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all 
+   
+   p <- g1 + g2 + g3 +
+        g4 + g5 + g6 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"), 
+                                                          legend.position = "right")
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_facility_BOTH_GROUPS_",i,".pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+  
+}
+
+
+#Chlorinated stats
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "CHLORINATED")
+  
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    wmeta = meta_p %>% filter(Week == j)
+    ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+    wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+    wwdist = dist_subset(wdist, ids)
+    set.seed(1)
+    a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+    a = a[c("Facility"),c("R2","F","Pr(>F)")] 
+    a = a %>% 
+      transmute(Timepoint = j,
+                Sex = "All",
+                comp = "Facility",
+                R2 = paste0(round(R2*100,2)," %"),
+                F = round(F,3),
+                pvalue = round(`Pr(>F)`,3))
+    res = rbind(res, a)
+    for (k in c("Male","Female")){
+      ##Facility
+        wmeta = meta_p %>% filter(Week == j & Sex == k)
+        ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+        wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+        wwdist = dist_subset(wdist, ids)
+        set.seed(1)
+        a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+        a = a[c("Facility"),c("R2","F","Pr(>F)")] 
+        a = a %>% 
+          transmute(Timepoint = j,
+                    Sex = k,
+                    comp = "Facility",
+                    R2 = paste0(round(R2*100,2)," %"),
+                    F = round(F,3),
+                    pvalue = round(`Pr(>F)`,3))
+        res = rbind(res, a)
+    }  
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_CHLORINATED_",i,".csv",sep = ""))
+}    
+
+
+#DIWATER stats
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "DIWATER")
+  
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    wmeta = meta_p %>% filter(Week == j)
+    ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+    wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+    wwdist = dist_subset(wdist, ids)
+    set.seed(1)
+    a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+    a = a[c("Facility"),c("R2","F","Pr(>F)")] 
+    a = a %>% 
+      transmute(Timepoint = j,
+                Sex = "All",
+                comp = "Facility",
+                R2 = paste0(round(R2*100,2)," %"),
+                F = round(F,3),
+                pvalue = round(`Pr(>F)`,3))
+    res = rbind(res, a)
+    for (k in c("Male","Female")){
+      ##Facility
+        wmeta = meta_p %>% filter(Week == j & Sex == k)
+        ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+        wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+        wwdist = dist_subset(wdist, ids)
+        set.seed(1)
+        a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+        a = a[c("Facility"),c("R2","F","Pr(>F)")] 
+        a = a %>% 
+          transmute(Timepoint = j,
+                    Sex = k,
+                    comp = "Facility",
+                    R2 = paste0(round(R2*100,2)," %"),
+                    F = round(F,3),
+                    pvalue = round(`Pr(>F)`,3))
+        res = rbind(res, a)
+    }  
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_DIWATER_",i,".csv",sep = ""))
+}    
+  
+
+```
+
+#Treatment differences by facility and age
+```{r}
+
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#panels split by age and facility, colored by treatment
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  
+  wdist = get(paste0("dm_", i))
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Vivarium")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 3, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Vivarium")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat %>% filter(Week == "Week 7" & Facility == "Vivarium"), 
+              aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 7, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Vivarium")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g3 = ggplot(wdat %>% filter(Week == "Week 12" & Facility == "Vivarium"), 
+              aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 12, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Farm")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 3, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Farm")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat %>% filter(Week == "Week 7" & Facility == "Farm"), 
+              aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 7, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Farm") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g6 = ggplot(wdat %>% filter(Week == "Week 12" & Facility == "Farm"), 
+              aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)")
+           #title = paste0("Week 12, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  p <- g1 + g2 + g3 +
+       g4 + g5 + g6 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_treatment_differences_by_age-facility_",i,".pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+}
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Facility = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Facility)){
+      wmeta = meta_p %>% filter(Week == j & Facility == k)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Treatment, data = wmeta, by = "margin"))
+      a = a[c(paste0("Treatment")),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(
+                  Timepoint = j,
+                  Facility = k,
+                  comp = "Treatment",
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_treatment_differences_by_age-facility_",i,".csv",sep = ""))
+  
+} 
+```
+
+#Facility differences by sex and age and treatment
+```{r}
+
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#panels split by age and sex and treatment
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  
+  wdist = get(paste0("dm_", i))
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Sex == "Male" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Males\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Sex == "Male" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Male\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Sex == "Male" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g3 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Male\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Sex == "Female" & TREATMENT == "DIWATER")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Female\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Sex == "Female" & TREATMENT == "DIWATER")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Female\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Sex == "Female" & TREATMENT == "DIWATER") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g6 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Female\nDiwater\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Sex == "Male" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g7 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Males\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Sex == "Male" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g8 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Male\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Sex == "Male" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g9 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Male\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Sex == "Female" & TREATMENT == "CHLORINATED")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g10 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Female\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Sex == "Female" & TREATMENT == "CHLORINATED")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g11 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Female\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Sex == "Female" & TREATMENT == "CHLORINATED") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g12 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Facility)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_facility) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Female\nChlorinated\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  p <- g1 + g2 + g3 +
+       g4 + g5 + g6 +
+       g7 + g8 + g9 +
+       g10 + g11 + g12 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = "A") & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_facility_differences_by_age-sex-treatment_",i,"_for_paper.pdf"),
+          plot = p, width = 8, height = 10, units = "in", dpi = 300, device = "pdf")
+}
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "CHLORINATED") %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Sex = factor(Sex,
+                             levels = c("Male", "Female"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Sex)){
+      wmeta = meta_p %>% filter(Week == j & Sex == k)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+      a = a[c(paste0("Facility")),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(
+                  Timepoint = j,
+                  Sex = k,
+                  comp = "Facility",
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_CHLORINATED_facility_differences_by_age-sex_",i,".csv",sep = ""))
+  
+}    
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "DIWATER") %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Sex = factor(Sex,
+                             levels = c("Male", "Female"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Sex = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Sex)){
+      wmeta = meta_p %>% filter(Week == j & Sex == k)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Facility, data = wmeta, by = "margin"))
+      a = a[c(paste0("Facility")),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(
+                  Timepoint = j,
+                  Sex = k,
+                  comp = "Facility",
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_DIWATER_facility_differences_by_age-sex_",i,".csv",sep = ""))
+  
+}    
+```
+
+#Treatment differences by facility and age and sex
+```{r}
+
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#panels split by age and facility, colored by treatment
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  
+  wdist = get(paste0("dm_", i))
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Vivarium" & Sex == "Male")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 3, Male\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Vivarium" & Sex == "Male")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 7, Male\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Vivarium"  & Sex == "Male")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g3 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 12, Male\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Farm" & Sex == "Male")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 3, Male\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Farm"  & Sex == "Male")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 7, Male\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Farm" & Sex == "Male") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g6 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 12, Male\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Vivarium" & Sex == "Female")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g7 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 3, Female\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Vivarium" & Sex == "Female")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g8 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 7, Female\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Vivarium"  & Sex == "Female")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g9 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 12, Female\nVivarium\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Farm" & Sex == "Female")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g10 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 3, Female\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Farm"  & Sex == "Female")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g11 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 7, Female\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Farm" & Sex == "Female") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g12 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Treatment)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_treatment) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           title = paste0("Week 12, Female\nFarm\n", test_name[i])) + 
+        theme_bw() + theme_all
+  
+  p <- g1 + g2 + g3 +
+       g4 + g5 + g6 +
+       g7 + g8 + g9 +
+       g10 + g11 + g12 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_treatment_differences_by_age-facility-sex_",i,".pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+}
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T),
+           Sex = factor(Sex,
+                             levels = c("Male", "Female"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Facility = NA, Sex = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Facility)){
+      for(x in levels(meta_p$Sex)){
+        wmeta = meta_p %>% filter(Week == j & Facility == k, Sex == x)
+        ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+        wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+        wwdist = dist_subset(wdist, ids)
+        set.seed(1)
+        a = as.data.frame(adonis2(wwdist ~ Treatment, data = wmeta, by = "margin"))
+        a = a[c(paste0("Treatment")),c("R2","F","Pr(>F)")] 
+        a = a %>% 
+          transmute(
+                    Timepoint = j,
+                    Facility = k,
+                    Sex = x,
+                    comp = "Treatment",
+                    R2 = paste0(round(R2*100,2)," %"),
+                    F = round(F,3),
+                    pvalue = round(`Pr(>F)`,3))
+        res = rbind(res, a)
+        }
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_treatment_differences_by_age-facility-sex_",i,".csv",sep = ""))
+  
+} 
+```
+
+#Sex differences in Diwater by facility and age
+```{r}
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#panels split by age and facility, colored by sex
+#only diwater
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  
+  wdist = get(paste0("dm_", i))
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Vivarium" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Vivarium" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Vivarium" & TREATMENT == "DIWATER")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g3 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Farm" & TREATMENT == "DIWATER")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Farm" & TREATMENT == "DIWATER")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Farm" & TREATMENT == "DIWATER") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g6 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  p <- g1 + g2 + g3 +
+       g4 + g5 + g6 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_DIWATER_sex_differences_by_age-facility_",i,"_for_paper.pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+}
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "DIWATER") %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Facility = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Facility)){
+      wmeta = meta_p %>% filter(Week == j & Facility == k)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Sex, data = wmeta, by = "margin"))
+      a = a[c(paste0("Sex")),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(
+                  Timepoint = j,
+                  Facility = k,
+                  comp = "Sex",
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_DIWATER_sex_differences_by_age-facility_",i,".csv",sep = ""))
+  
+}    
+```
+
+#Sex differences in Chlorinated by facility and age
+```{r}
+
+test_name = list("bray" = "Bray-Curtis", "jaccard" = "Jaccard", "uufrac" = "Unweighted Unifrac", "wufrac" = "Weighted Unifrac")
+
+#panels split by age and facility, colored by sex
+#only chlorinated
+#no p-values attached, not final figures
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  
+  wdist = get(paste0("dm_", i))
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Vivarium" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g1 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Vivarium" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g2 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Vivarium" & TREATMENT == "CHLORINATED")
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g3 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Vivarium\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 3" & Facility == "Farm" & TREATMENT == "CHLORINATED")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+
+  g4 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 3, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 7" & Facility == "Farm" & TREATMENT == "CHLORINATED")  
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g5 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 7, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  meta_panel <- meta_filtered %>% filter(Week == "Week 12" & Facility == "Farm" & TREATMENT == "CHLORINATED") 
+  ids <- intersect(rownames(as.matrix(wdist)), meta_panel$SampleID)
+  wwdist <- dist_subset(wdist, ids)
+
+  wpcoa = pcoa(wwdist)
+  varPC1 <- round(wpcoa$values$Relative_eig[1]*100, 2)
+  varPC2 <- round(wpcoa$values$Relative_eig[2]*100, 2)
+  wdat = merge(wpcoa$vectors[,1:2],meta_panel, by.x = 0, by.y = "SampleID")
+  
+  g6 = ggplot(wdat, aes(x = Axis.1, y = Axis.2, color = Sex)) + 
+        geom_point(alpha = 0.8, size = 1) + 
+        #stat_ellipse() + 
+        scale_color_manual(values = col_sex) +
+        labs(x = paste0("PC1 (", varPC1, "%)"),
+           y = paste0("PC2 (", varPC2, "%)"),
+           #title = paste0("Week 12, Farm\n", test_name[i])
+           ) + 
+        theme_bw() + theme_all
+  
+  p <- g1 + g2 + g3 +
+       g4 + g5 + g6 +
+    plot_layout(guides = "collect", ncol = 3) + 
+    plot_annotation(title = "", tag_levels = 'A') & theme(plot.tag = element_text(size = 12, face = "bold"))
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_recreation_pcoa_CHLORINATED_sex_differences_by_age-facility_",i,"_for_paper.pdf"),
+          plot = p, width = 8, height =  5, units = "in", dpi = 300, device = "pdf")
+}
+
+for (i in c("bray", "jaccard", "uufrac", "wufrac")){
+  wdist = get(paste0("dm_", i))
+  
+  meta_p = meta_filtered %>% filter(TREATMENT == "CHLORINATED") %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                         ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T))
+  
+  res = data.frame(Timepoint = NA, Facility = NA, comp = NA, R2 = NA, F = NA, pvalue = NA)
+  for (j in levels(meta_p$Week)) {
+    for(k in levels(meta_p$Facility)){
+      wmeta = meta_p %>% filter(Week == j & Facility == k)
+      ids <- intersect(rownames(as.matrix(wdist)), wmeta$SampleID)
+      wmeta <- wmeta[wmeta$SampleID %in% ids, ]
+      wwdist = dist_subset(wdist, ids)
+      set.seed(1)
+      a = as.data.frame(adonis2(wwdist ~ Sex, data = wmeta, by = "margin"))
+      a = a[c(paste0("Sex")),c("R2","F","Pr(>F)")] 
+      a = a %>% 
+        transmute(
+                  Timepoint = j,
+                  Facility = k,
+                  comp = "Sex",
+                  R2 = paste0(round(R2*100,2)," %"),
+                  F = round(F,3),
+                  pvalue = round(`Pr(>F)`,3))
+      res = rbind(res, a)
+      }
+  }  
+  res = res %>% filter(!is.na(Timepoint))
+  write.csv(res, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/03_beta_figures/","pup_adonis_CHLORINATED_sex_differences_by_age-facility_",i,".csv",sep = ""))
+}    
+```
