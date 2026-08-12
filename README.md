@@ -1,3 +1,2 @@
 # Chlorination
-MGDB Chlorination paper code
-By Haipeng Sun and Aiswaryaa Prabaharan
+MGDB Chlorination paper code by Haipeng Sun and Aiswaryaa Prabaharan
