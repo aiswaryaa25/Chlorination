@@ -1,0 +1,225 @@
+---
+title: "alpha diversity"
+author: "HP"
+date: "11/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## library
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggpubr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+load("temp.RData")
+#load("01_Rdata/meta_16S.Rdata")
+#load("01_Rdata/alpha.Rdata")
+#output = "02_alpha/"
+```
+
+## data filtering
+```{r}
+meta = meta_16S[pmatch(rownames(as.matrix(dm_bray)),meta_16S$SampleID,),]
+
+meta_pup <- meta %>% filter(Generation == "F1") %>% 
+    mutate(Facility = case_when(Facility == "Farm" ~ "Farm", 
+                                T ~ "Vivarium"),
+           Treatment = case_when(TREATMENT == "DIWATER" ~ "Diwater",
+                                 T ~ "Chlorinated"),
+           Sex = case_when(Sex == "F" ~ "Female",
+                            T ~ "Male")) %>% 
+    mutate(SamplingTimepoint = str_trim(SamplingTimepoint)) %>%
+    mutate(Week = case_when(SamplingTimepoint == "Week3" ~ "Week 3",
+                            SamplingTimepoint == "Week7" ~ "Week 7",
+                            SamplingTimepoint == "Week12" ~ "Week 12",
+                            T ~ NA)) %>% 
+    drop_na(Week) %>% 
+    mutate(Week = factor(Week, 
+                         levels = c("Week 3", "Week 7", "Week 12"),
+                          ordered = T),
+           Facility = factor(Facility,
+                             levels = c("Vivarium", "Farm"),
+                             ordered = T),
+           Treatment = factor(Treatment,
+                              levels = c("Diwater", "Chlorinated"),
+                              ordered = T))
+
+vivarium_IDs <- filter(meta_pup, Week == "Week 12" & Facility == "Vivarium") %>% distinct(SubjectID) %>% pull(SubjectID)
+
+farm_IDs <- filter(meta_pup, Week == "Week 7" & Facility == "Farm") %>% 
+  group_by(FamilyID) %>%
+  filter(n() > 1) %>%
+  ungroup() %>% 
+  distinct(SubjectID) %>% pull(SubjectID)
+
+final_IDs <- c(vivarium_IDs, farm_IDs)
+meta_filtered <- meta_pup %>% filter(SubjectID %in% final_IDs)
+meta_filtered <- left_join(meta_filtered, alpha, by = "SampleID") %>% 
+  rename(shannon = shannon_index,
+         evenness = pielou_evenness,
+         observed_otus = observed_ASVs)
+
+theme_all <- theme(panel.background = element_rect(fill = NA), 
+                   plot.title = element_text(hjust = 0.5), 
+                   axis.text = element_text(size = 8),
+                   axis.title = element_text(size = 10),
+                   legend.text = element_text(size=10),
+                   legend.title = element_text(size=10, face = "bold"),
+                   title = element_text(size=10),
+                   strip.text = element_text(color = "black", face = "bold"),
+                   strip.background = element_blank(),
+                   aspect.ratio = 1
+                   )
+
+```
+
+
+## comparing Pup
+```{r}
+meta_filtered = meta_filtered %>% 
+  mutate(Days = case_when(SamplingTimepoint == "Week3" ~ 21,
+                          SamplingTimepoint == "Week7" ~ 49,
+                          SamplingTimepoint == "Week12" ~ 84))
+
+
+alpha_stats = meta_filtered %>% 
+  group_by(Facility, Days, Treatment, Sex) %>% 
+  summarise(N = n(), 
+            shannon_mean = mean(shannon), 
+            evenness_mean = mean(evenness), 
+            observed_otus_mean = mean(observed_otus), 
+            faith_pd_mean = mean(faith_pd),
+            shannon_sd = sd(shannon), 
+            evenness_sd = sd(evenness), 
+            observed_otus_sd = sd(observed_otus), 
+            faith_pd_sd = sd(faith_pd),
+            shannon_min = min(shannon), 
+            evenness_min = min(evenness), 
+            observed_otus_min = min(observed_otus), 
+            faith_pd_min = min(faith_pd)
+            ) %>%
+  mutate(N_label = paste0("N=",N))
+
+for (i in c("shannon", "evenness", "observed_otus", "faith_pd")){
+  g = ggplot(meta_filtered, aes(x = Days, y = get(i), color = Treatment)) + 
+    geom_point(position=position_jitterdodge()) + 
+    stat_compare_means(aes(group = Treatment), 
+                       method = "t.test", 
+                       label = "p.signif",
+                       hide.ns = T, size = 10, 
+                       label.y = max(meta_filtered[i])*0.9,
+                       show.legend = F) + 
+    #geom_text(data = alpha_stats, aes(x = Days, y = min(meta_filtered[i]) * 0.95, label = N_label), angle = 90, position = position_dodge(width = 5.5),size = 4) + 
+    geom_ribbon(data = alpha_stats, aes(x = Days, 
+                                     y = get(paste(i,"_mean",sep = "")), 
+                                     ymin = get(paste(i,"_mean",sep = "")) - get(paste(i,"_sd",sep = "")), 
+                                     ymax = get(paste(i,"_mean",sep = "")) + get(paste(i,"_sd",sep = "")),
+                color = Treatment, fill = Treatment),
+                alpha = 0.2) + 
+    geom_line(data = alpha_stats, aes(x = Days, y = get(paste(i,"_mean",sep = "")), group = Treatment )) + 
+    scale_x_continuous(breaks = c(21,49,84), label = c(3,7,12)) + 
+    scale_color_manual(values = col_treatment, aesthetics = c("colour", "fill")) + 
+    facet_grid(Facility ~ Sex, labeller = labeller(Sex = labs_sex, Facility = labs_facility)) + 
+    labs(x = "Age (Week)", y = i) +
+    theme_bw() + theme_all
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/04_alpha_figures/","Pup_alpha_treatment_",i,"_boxplot.pdf"),
+         g, width = 7, height = 5, units = "in", dpi = 300, device = "pdf")
+  
+  g = ggplot(meta_filtered, aes(x = Days, y = get(i), color = Facility)) + 
+    geom_point(position=position_jitterdodge()) + 
+    stat_compare_means(aes(group = Facility), 
+                       method = "t.test", 
+                       label = "p.signif",
+                       hide.ns = T, size = 10, 
+                       label.y = max(meta_filtered[i])*0.9,
+                       show.legend = F) + 
+    #geom_text(data = alpha_stats, aes(x = Days, y = min(meta_filtered[i]) * 0.95, label = N_label), angle = 90, position = position_dodge(width = 5.5),size = 4) + 
+    geom_ribbon(data = alpha_stats, aes(x = Days, 
+                                     y = get(paste(i,"_mean",sep = "")), 
+                                     ymin = get(paste(i,"_mean",sep = "")) - get(paste(i,"_sd",sep = "")), 
+                                     ymax = get(paste(i,"_mean",sep = "")) + get(paste(i,"_sd",sep = "")),
+                color = Facility, fill = Facility),
+                alpha = 0.2) + 
+    geom_line(data = alpha_stats, aes(x = Days, y = get(paste(i,"_mean",sep = "")), group = Facility )) + 
+    scale_x_continuous(breaks = c(21,49,84), label = c(3,7,12)) + 
+    scale_color_manual(values = col_facility, aesthetics = c("colour", "fill")) + 
+    facet_grid(Treatment ~ Sex, labeller = labeller(Sex = labs_sex, Treatment = labs_treatment)) + 
+    labs(x = "Age (Week)", y = i) +
+    theme_bw() + theme_all
+  
+  ggsave(file = paste0("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/04_alpha_figures/","Pup_alpha_facility_",i,"_boxplot.pdf"),
+         g, width = 7, height = 5, units = "in", dpi = 300, device = "pdf")
+}
+
+#stats from qiime data
+library(effectsize)
+library(emmeans)
+stat.combined <- data.frame()
+
+fit <- lmer(faith_pd ~ Week + Facility + Sex + Treatment + (1 | SubjectID), data = meta_filtered)
+eta_squared(fit, partial = TRUE)
+faith_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Faith;s PD", .before = 1)
+stat.weeks <- pairs(emmeans(fit, ~ Week)) %>% as.data.frame() %>% add_column(Metric = "Faith's PD", .before = 1)
+stat.facility <- pairs(emmeans(fit, ~ Facility)) %>% as.data.frame() %>% add_column(Metric = "Faith's PD", .before = 1)
+stat.sex <- pairs(emmeans(fit, ~ Sex)) %>% as.data.frame() %>% add_column(Metric = "Faith's PD", .before = 1)
+stat.treat <- pairs(emmeans(fit, ~ Treatment)) %>% as.data.frame() %>% add_column(Metric = "Faith's PD", .before = 1)
+stat.combined <- rbind(stat.combined, stat.weeks, stat.facility, stat.sex, stat.treat)
+
+fit <- lmer(observed_otus ~ Week + Facility + Sex + Treatment + (1 | SubjectID), data = meta_filtered)
+eta_squared(fit, partial = TRUE)
+observed_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Observed OTUs", .before = 1)
+stat.weeks <- pairs(emmeans(fit, ~ Week)) %>% as.data.frame() %>% add_column(Metric = "Observed OTUs", .before = 1)
+stat.facility <- pairs(emmeans(fit, ~ Facility)) %>% as.data.frame() %>% add_column(Metric = "Observed OTUs", .before = 1)
+stat.sex <- pairs(emmeans(fit, ~ Sex)) %>% as.data.frame() %>% add_column(Metric = "Observed OTUs", .before = 1)
+stat.treat <- pairs(emmeans(fit, ~ Treatment)) %>% as.data.frame() %>% add_column(Metric = "Observed OTUs", .before = 1)
+stat.combined <- rbind(stat.combined, stat.weeks, stat.facility, stat.sex, stat.treat)
+
+
+fit <- lmer(evenness ~ Week + Facility + Sex + Treatment + (1 | SubjectID), data = meta_filtered)
+eta_squared(fit, partial = TRUE)
+evenness_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Pielou's Evenness", .before = 1)
+stat.weeks <- pairs(emmeans(fit, ~ Week)) %>% as.data.frame() %>% add_column(Metric = "Pielou's Evenness", .before = 1)
+stat.facility <- pairs(emmeans(fit, ~ Facility)) %>% as.data.frame() %>% add_column(Metric = "Pielou's Evenness", .before = 1)
+stat.sex <- pairs(emmeans(fit, ~ Sex)) %>% as.data.frame() %>% add_column(Metric = "Pielou's Evenness", .before = 1)
+stat.treat <- pairs(emmeans(fit, ~ Treatment)) %>% as.data.frame() %>% add_column(Metric = "Pielou's Evenness", .before = 1)
+stat.combined <- rbind(stat.combined, stat.weeks, stat.facility, stat.sex, stat.treat)
+
+fit <- lmer(shannon ~ Week + Facility + Sex + Treatment + (1 | SubjectID), data = meta_filtered)
+eta_squared(fit, partial = TRUE)
+shannon_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Shannon", .before = 1)
+stat.weeks <- pairs(emmeans(fit, ~ Week)) %>% as.data.frame() %>% add_column(Metric = "Shannon", .before = 1)
+stat.facility <- pairs(emmeans(fit, ~ Facility)) %>% as.data.frame() %>% add_column(Metric = "Shannon", .before = 1)
+stat.sex <- pairs(emmeans(fit, ~ Sex)) %>% as.data.frame() %>% add_column(Metric = "Shannon", .before = 1)
+stat.treat <- pairs(emmeans(fit, ~ Treatment)) %>% as.data.frame() %>% add_column(Metric = "Shannon", .before = 1)
+stat.combined <- rbind(stat.combined, stat.weeks, stat.facility, stat.sex, stat.treat)
+
+all_anova <- rbind(faith_anova, observed_anova, evenness_anova, shannon_anova)
+write.csv(all_anova, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/04_alpha_figures/","pup_alpha_anova_qiime.csv",sep = ""))
+write.csv(stat.combined, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/04_alpha_figures/","pup_alpha_pairs_emmeans_qiime.csv",sep = ""))
+
+
+all_anova <- data.frame()
+for(w in unique(meta_filtered$Week)) {
+  fit <- lm(faith_pd ~ Facility + Sex + Treatment, data = meta_filtered %>% filter(Week == w))
+  faith_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Faith PD", .before = 1) %>% add_column(Week = w, .before = 1)
+  
+  fit <- lm(observed_otus ~ Facility + Sex + Treatment, data = meta_filtered %>% filter(Week == w))
+  observed_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Observed OTUs", .before = 1) %>% add_column(Week = w, .before = 1)
+  
+  fit <- lm(evenness ~ Facility + Sex + Treatment , data = meta_filtered %>% filter(Week == w))
+  evenness_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Pielou's Evenness", .before = 1) %>% add_column(Week = w, .before = 1)
+  
+  fit <- lm(shannon ~ Facility + Sex + Treatment, data = meta_filtered %>% filter(Week == w))
+  shannon_anova <- anova(fit) %>% rownames_to_column() %>% add_column(Metric = "Shannon", .before = 1)  %>% add_column(Week = w, .before = 1)
+  
+  all_anova <- rbind(all_anova, faith_anova, observed_anova, evenness_anova, shannon_anova)
+}
+write.csv(all_anova, file = paste("/Users/aiswaryaa/Downloads/CL_rna/20211015_CL_analysis_new/04_alpha_figures/","pup_alpha_anova_qiime_by_age.csv",sep = ""))
+
+```
